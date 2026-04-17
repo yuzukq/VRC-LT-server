@@ -5,24 +5,40 @@ import tempfile
 import uuid
 from pathlib import Path
 
+import boto3
 import discord
+from botocore.config import Config
 from dotenv import load_dotenv
 
 load_dotenv()
 
 TOKEN = os.environ["DISCORD_TOKEN"]
 CHANNEL_ID = int(os.environ["CHANNEL_ID"])
-VIDEO_DIR = Path(os.environ.get("VIDEO_DIR", "/opt/vrc-lt/videos"))
-BASE_URL = os.environ["BASE_URL"].rstrip("/")
 MAX_FILE_MB = int(os.environ.get("MAX_FILE_MB", "50"))
+
+# Cloudflare R2
+R2_ACCOUNT_ID = os.environ["R2_ACCOUNT_ID"]
+R2_ACCESS_KEY_ID = os.environ["R2_ACCESS_KEY_ID"]
+R2_SECRET_ACCESS_KEY = os.environ["R2_SECRET_ACCESS_KEY"]
+R2_BUCKET_NAME = os.environ["R2_BUCKET_NAME"]
+R2_PUBLIC_URL = os.environ["R2_PUBLIC_URL"].rstrip("/")  # e.g. https://pub-xxx.r2.dev
+
+s3 = boto3.client(
+    "s3",
+    endpoint_url=f"https://{R2_ACCOUNT_ID}.r2.cloudflarestorage.com",
+    aws_access_key_id=R2_ACCESS_KEY_ID,
+    aws_secret_access_key=R2_SECRET_ACCESS_KEY,
+    region_name="auto",
+    config=Config(signature_version="s3v4"),
+)
 
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
 
 
-def convert_pdf_to_mp4(pdf_path: Path, output_path: Path) -> tuple[bool, str, int]:
-    """PDFをMP4に変換する。(成功, エラーメッセージ, スライド枚数) を返す"""
+def convert_and_upload(pdf_path: Path, object_key: str) -> tuple[bool, str, int]:
+    """PDFをMP4に変換してR2にアップロードする。(成功, エラーメッセージ, スライド枚数) を返す"""
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp = Path(tmpdir)
         img_prefix = tmp / "slide"
@@ -41,8 +57,7 @@ def convert_pdf_to_mp4(pdf_path: Path, output_path: Path) -> tuple[bool, str, in
         if not images:
             return False, "スライド画像の生成に失敗しました", 0
 
-        # ffmpeg concat用のファイルリストを作成
-        # 各スライドを1秒表示する
+        # ffmpeg concat用ファイルリスト (各スライド1秒表示)
         concat_file = tmp / "concat.txt"
         with open(concat_file, "w") as f:
             for img in images:
@@ -51,10 +66,12 @@ def convert_pdf_to_mp4(pdf_path: Path, output_path: Path) -> tuple[bool, str, in
             # concat demuxerのバグ回避: 最後のフレームを再度追加
             f.write(f"file '{images[-1]}'\n")
 
-        # ffmpegでMP4生成
+        mp4_path = tmp / "output.mp4"
+
+        # PDF → MP4
         # - scale: 1920x1080にfit (アスペクト比維持、余白は黒)
         # - libx264 + yuv420p: 幅広い互換性
-        # - movflags faststart: moovアトムを先頭に (nginx mp4モジュール必須)
+        # - movflags faststart: moovアトムを先頭に (シーク対応)
         result = subprocess.run(
             [
                 "ffmpeg",
@@ -68,7 +85,7 @@ def convert_pdf_to_mp4(pdf_path: Path, output_path: Path) -> tuple[bool, str, in
                 "-pix_fmt", "yuv420p",
                 "-movflags", "+faststart",
                 "-y",
-                str(output_path),
+                str(mp4_path),
             ],
             capture_output=True,
             text=True,
@@ -77,13 +94,20 @@ def convert_pdf_to_mp4(pdf_path: Path, output_path: Path) -> tuple[bool, str, in
         if result.returncode != 0:
             return False, f"ffmpeg失敗:\n```{result.stderr[-500:]}```", 0
 
-        return True, "", len(images)
+        # R2へアップロード
+        s3.upload_file(
+            str(mp4_path),
+            R2_BUCKET_NAME,
+            object_key,
+            ExtraArgs={"ContentType": "video/mp4"},
+        )
+
+    return True, "", len(images)
 
 
 @client.event
 async def on_ready():
     print(f"Logged in as {client.user} (id: {client.user.id})")
-    VIDEO_DIR.mkdir(parents=True, exist_ok=True)
 
 
 @client.event
@@ -100,7 +124,6 @@ async def on_message(message: discord.Message):
     if pdf_attachment is None:
         return
 
-    # ファイルサイズチェック
     if pdf_attachment.size > MAX_FILE_MB * 1024 * 1024:
         await message.reply(f"ファイルサイズが大きすぎます (上限: {MAX_FILE_MB}MB)")
         return
@@ -114,21 +137,20 @@ async def on_message(message: discord.Message):
         await pdf_attachment.save(pdf_path)
 
         video_id = uuid.uuid4().hex[:10]
-        # 発表者名をファイル名に含める (英数字のみ)
         safe_name = "".join(c for c in message.author.display_name if c.isalnum())[:20]
-        video_name = f"{safe_name}_{video_id}.mp4"
-        video_path = VIDEO_DIR / video_name
+        filename = f"{safe_name}_{video_id}.mp4"
+        object_key = f"videos/{filename}"
 
         loop = asyncio.get_event_loop()
         ok, err_msg, slide_count = await loop.run_in_executor(
-            None, convert_pdf_to_mp4, pdf_path, video_path
+            None, convert_and_upload, pdf_path, object_key
         )
 
     if not ok:
         await status_msg.edit(content=f"変換に失敗しました。{err_msg}")
         return
 
-    url = f"{BASE_URL}/videos/{video_name}"
+    url = f"{R2_PUBLIC_URL}/{object_key}"
     await status_msg.edit(
         content=(
             f"変換完了！\n"
