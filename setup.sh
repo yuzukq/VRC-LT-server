@@ -7,7 +7,7 @@ INSTALL_DIR="/opt/vrc-lt"
 BOT_USER="vrc-lt"
 
 echo "=== 依存パッケージのインストール ==="
-pacman -Sy --noconfirm python ffmpeg poppler
+pacman -Syu --noconfirm python ffmpeg poppler
 
 echo "=== ユーザー・ディレクトリ作成 ==="
 useradd -r -s /usr/bin/nologin "$BOT_USER" 2>/dev/null || true
