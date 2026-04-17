@@ -137,7 +137,7 @@ async def on_message(message: discord.Message):
         await pdf_attachment.save(pdf_path)
 
         video_id = uuid.uuid4().hex[:10]
-        safe_name = "".join(c for c in message.author.display_name if c.isalnum())[:20]
+        safe_name = "".join(c for c in message.author.display_name if c.isascii() and c.isalnum())[:20] or "user"
         filename = f"{safe_name}_{video_id}.mp4"
         object_key = f"videos/{filename}"
 
