@@ -1,0 +1,18 @@
+[Unit]
+Description=VRC-LT Discord Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=vrc-lt
+WorkingDirectory=/opt/vrc-lt
+EnvironmentFile=/opt/vrc-lt/.env
+ExecStart=/opt/vrc-lt/venv/bin/python bot.py
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
