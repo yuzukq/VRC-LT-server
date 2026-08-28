@@ -8,6 +8,7 @@ from pathlib import Path
 import boto3
 import discord
 from botocore.config import Config
+from discord import app_commands
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -32,9 +33,16 @@ s3 = boto3.client(
     config=Config(signature_version="s3v4"),
 )
 
-intents = discord.Intents.default()
-intents.message_content = True
-client = discord.Client(intents=intents)
+class LTBot(discord.Client):
+    def __init__(self):
+        super().__init__(intents=discord.Intents.default())
+        self.tree = app_commands.CommandTree(self)
+
+    async def setup_hook(self):
+        await self.tree.sync()
+
+
+client = LTBot()
 
 
 def convert_and_upload(pdf_path: Path, object_key: str) -> tuple[bool, str, int]:
@@ -110,48 +118,46 @@ async def on_ready():
     print(f"Logged in as {client.user} (id: {client.user.id})")
 
 
-@client.event
-async def on_message(message: discord.Message):
-    if message.author.bot:
-        return
-    if message.channel.id != CHANNEL_ID:
-        return
-
-    pdf_attachment = next(
-        (a for a in message.attachments if a.filename.lower().endswith(".pdf")),
-        None,
-    )
-    if pdf_attachment is None:
+@client.tree.command(name="convert", description="PDFをVRChat用MP4に変換してR2にアップロードします")
+@app_commands.describe(file="変換するPDFファイル")
+async def convert(interaction: discord.Interaction, file: discord.Attachment):
+    if interaction.channel_id != CHANNEL_ID:
+        await interaction.response.send_message(
+            f"このコマンドは <#{CHANNEL_ID}> でのみ使用できます", ephemeral=True
+        )
         return
 
-    if pdf_attachment.size > MAX_FILE_MB * 1024 * 1024:
-        await message.reply(f"ファイルサイズが大きすぎます (上限: {MAX_FILE_MB}MB)")
+    if not file.filename.lower().endswith(".pdf"):
+        await interaction.response.send_message("PDFファイルを添付してください", ephemeral=True)
         return
 
-    status_msg = await message.reply(
-        f"`{pdf_attachment.filename}` を受け取りました。変換中..."
-    )
+    if file.size > MAX_FILE_MB * 1024 * 1024:
+        await interaction.response.send_message(
+            f"ファイルサイズが大きすぎます (上限: {MAX_FILE_MB}MB)", ephemeral=True
+        )
+        return
+
+    await interaction.response.defer()
 
     with tempfile.TemporaryDirectory() as tmpdir:
         pdf_path = Path(tmpdir) / "input.pdf"
-        await pdf_attachment.save(pdf_path)
+        await file.save(pdf_path)
 
         video_id = uuid.uuid4().hex[:10]
-        safe_name = message.author.name[:20]
+        safe_name = interaction.user.name[:20]
         filename = f"{safe_name}_{video_id}.mp4"
         object_key = f"videos/{filename}"
 
-        loop = asyncio.get_event_loop()
-        ok, err_msg, slide_count = await loop.run_in_executor(
-            None, convert_and_upload, pdf_path, object_key
+        ok, err_msg, slide_count = await asyncio.to_thread(
+            convert_and_upload, pdf_path, object_key
         )
 
     if not ok:
-        await status_msg.edit(content=f"変換に失敗しました。{err_msg}")
+        await interaction.edit_original_response(content=f"変換に失敗しました。{err_msg}")
         return
 
     url = f"{R2_PUBLIC_URL}/{object_key}"
-    await status_msg.edit(
+    await interaction.edit_original_response(
         content=(
             f"変換完了！\n"
             f"スライド枚数: **{slide_count}枚**\n"

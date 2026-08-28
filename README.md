@@ -2,7 +2,7 @@
 
 VRChatのLT会でスライドを投影するための自動変換・配信システムです。  
 VRChatではpdfの直接入力ができないため、1スライド1秒のmp4に変換することでスライド投影をしてます。
-Discordの任意のチャンネルにpdfを送信することで、pdf->mp4, R2ストレージへのアップロード, 公開URLの取得が行えます。
+Discordの指定チャンネルで `/convert` コマンドにpdfを添付することで、pdf->mp4, R2ストレージへのアップロード, 公開URLの取得が行えます。
 
 ## システム構成
 
@@ -14,8 +14,8 @@ sequenceDiagram
     participant R2 as Cloudflare R2
     participant VRChat
 
-    発表者->>Discord: PDFを投稿
-    Discord->>Bot: PDF受信
+    発表者->>Discord: /convert でPDFを添付
+    Discord->>Bot: スラッシュコマンド受信
     Bot->>Bot: pdftoppm で PNG に展開
     Bot->>Bot: ffmpeg で 1fps MP4 に変換
     Bot->>R2: MP4 をアップロード
@@ -29,7 +29,7 @@ sequenceDiagram
 ### 発表者側
 
 1. 発表用PDFを用意する
-2. Discordの指定チャンネルにPDFファイルを投稿する
+2. Discordの指定チャンネルで `/convert` コマンドを実行し、PDFファイルを添付する
 3. Botが `変換完了！` とともにURLを返信するまで待つ（スライド枚数によって数十秒〜数分）
 4. 返信されたURLをVRChatのメディアプレイヤーに入力する
 
@@ -51,7 +51,7 @@ MP4は `libx264` + `-movflags +faststart` でエンコードされており、VR
 
 - Docker / Docker Compose が使える環境（Linux, macOS, Windows問わず）
 - Cloudflare アカウント（R2 バケット）
-- Discord Bot トークン（Message Content Intent を有効化すること）
+- Discord Bot トークン
 
 ### 手順
 
@@ -88,7 +88,14 @@ R2_PUBLIC_URL=https://lt.yourdomain.com
 MAX_FILE_MB=50
 ```
 
-**4. Bot を起動**
+**4. Bot をサーバーに招待**
+
+Discord Developer Portal の OAuth2 → URL Generator で、以下2つのスコープにチェックを入れて生成したURLから招待してください。
+
+- `bot`
+- `applications.commands`（これがないと `/convert` コマンドが表示されません）
+
+**5. Bot を起動**
 
 ```bash
 docker compose up -d --build
