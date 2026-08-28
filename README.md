@@ -10,7 +10,7 @@ Discordの任意のチャンネルにpdfを送信することで、pdf->mp4, R2�
 sequenceDiagram
     actor 発表者
     participant Discord
-    participant Bot as Discord Bot<br/>(Arch Linux)
+    participant Bot as Discord Bot<br/>(Docker Container)
     participant R2 as Cloudflare R2
     participant VRChat
 
@@ -43,11 +43,13 @@ sequenceDiagram
 
 MP4は `libx264` + `-movflags +faststart` でエンコードされており、VRChatのAVPro Video Playerでページの前後移動が可能です。
 
+変換中に生成されるPNG/MP4はコンテナ内の `/tmp`（tmpfs）に一時的に書かれるだけで、R2へのアップロード後は自動的に破棄されます。ディスクには一切残らず、コンテナを再起動しても消えます。
+
 ## セットアップ
 
 ### 必要なもの
 
-- Linux環境（pacmanが利用可能な環境に限る）
+- Docker / Docker Compose が使える環境（Linux, macOS, Windows問わず）
 - Cloudflare アカウント（R2 バケット）
 - Discord Bot トークン（Message Content Intent を有効化すること）
 
@@ -68,16 +70,11 @@ Cloudflare ダッシュボードで：
 - カスタムドメインを設定する（例: `lt.yourdomain.com`）
 - API トークンを発行する（`オブジェクトの読み取りと書き込み` 権限）
 
-**3. セットアップスクリプトを実行**
+**3. `.env` を作成**
 
 ```bash
-sudo bash setup.sh
-```
-
-**4. `.env` を編集**
-
-```bash
-sudo vi /opt/vrc-lt/.env
+cp .env.example .env
+vi .env
 ```
 
 ```env
@@ -91,19 +88,18 @@ R2_PUBLIC_URL=https://lt.yourdomain.com
 MAX_FILE_MB=50
 ```
 
-**5. Bot を起動**
+**4. Bot を起動**
 
-動作確認（フォアグラウンド実行）:
 ```bash
-sudo -u vrc-lt /opt/vrc-lt/venv/bin/python /opt/vrc-lt/bot.py
-```
-
-常時起動:
-```bash
-sudo systemctl start vrc-lt-bot
+docker compose up -d --build
 ```
 
 ログ確認:
 ```bash
-journalctl -u vrc-lt-bot -f
+docker compose logs -f
+```
+
+停止:
+```bash
+docker compose down
 ```

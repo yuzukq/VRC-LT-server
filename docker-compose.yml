@@ -1,0 +1,10 @@
+services:
+  bot:
+    build: .
+    env_file:
+      - .env
+    restart: unless-stopped
+    tmpfs:
+      # PDF/PNG/MP4の作業ファイルはここに書かれる。tmpfsなのでディスクに残らず、
+      # コンテナ再起動でも自動的に消える。
+      - /tmp:size=1g
